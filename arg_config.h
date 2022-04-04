@@ -1,7 +1,7 @@
 #pragma once
 
 #include "wcap_config.h"
-#include "getopt.h"
+#include "getoptw.h"
 
 #include <wchar.h>
 
@@ -11,14 +11,16 @@ typedef struct CmdConfig
 {
 	struct Config wcap;
 
-	char title[TITLE_SIZE];
+	// title of the target window
+	wchar_t title[TITLE_SIZE];
 
-	const char* filepath;
+	// output file path.
+	wchar_t* filepath;
 } CmdConfig;
 
-void printUsage(const char* progName)
+void printUsage(const wchar_t* progName)
 {
-	printf("Usage: %s [options] outputname\n", progName);
+	wprintf(L"Usage: %s [options] outputname\n", progName);
 	puts("Program options:");
 	puts("  -i  --input <TARGET>             The recording target, the title of the window.");
 	puts("  -m  --mouse                      Draw mouse in the recording video.");
@@ -36,20 +38,20 @@ static int codec_h265_flag = 0;
 
 static struct option longOptions[] =
 {
-	{"help",      no_argument,       NULL, '?'},
-	{"mouse",     no_argument,       NULL, 'm'},
-	{"width",     required_argument, NULL, 'w'},
-	{"height",    required_argument, NULL, 'h'},
-	{"input",     required_argument, NULL, 'i'},
-	{"framerate", required_argument, NULL, 'r'},
-	{"time",      required_argument, NULL, 't'},
-	{"bitrate",   required_argument, NULL, 'b'},
-	{"h264",      no_argument,       &codec_h265_flag, 0},
-	{"h265",      no_argument,       &codec_h265_flag, 1},
+	{L"help",      no_argument,       NULL, L'?'},
+	{L"mouse",     no_argument,       NULL, L'm'},
+	{L"width",     required_argument, NULL, L'w'},
+	{L"height",    required_argument, NULL, L'h'},
+	{L"input",     required_argument, NULL, L'i'},
+	{L"framerate", required_argument, NULL, L'r'},
+	{L"time",      required_argument, NULL, L't'},
+	{L"bitrate",   required_argument, NULL, L'b'},
+	{L"h264",      no_argument,       &codec_h265_flag, 0},
+	{L"h265",      no_argument,       &codec_h265_flag, 1},
 	{0,0,0,0}
 };
 
-BOOL parseArgs(int argc, char* argv[], CmdConfig* config)
+BOOL parseArgs(int argc, wchar_t* argv[], CmdConfig* config)
 {
 	int c;
 
@@ -64,7 +66,7 @@ BOOL parseArgs(int argc, char* argv[], CmdConfig* config)
 	for (;;)
 	{
 		int optionIndex = 0;
-		c = getopt_long(argc, argv, "?mw:h:r:i:t:b:", longOptions, &optionIndex);
+		c = getopt_long(argc, argv, L"?mw:h:r:i:t:b:", longOptions, &optionIndex);
 
 		if (c == -1)
 		{
@@ -75,38 +77,38 @@ BOOL parseArgs(int argc, char* argv[], CmdConfig* config)
 		{
 		case 0:
 			break;
-		case '?':
+		case L'?':
 			return FALSE;
-		case 'm':
+		case L'm':
 			config->wcap.MouseCursor = TRUE;
 			break;
-		case 'r':
-			config->wcap.VideoMaxFramerate = atoi(optarg);
+		case L'r':
+			config->wcap.VideoMaxFramerate = _wtoi(optarg);
 			break;
-		case 'w':
-			config->wcap.VideoMaxWidth = atoi(optarg);
+		case L'w':
+			config->wcap.VideoMaxWidth = _wtoi(optarg);
 			break;
-		case 'h':
-			config->wcap.VideoMaxHeight = atoi(optarg);
+		case L'h':
+			config->wcap.VideoMaxHeight = _wtoi(optarg);
 			break;
-		case 't':
+		case L't':
 		{
-			int len = atoi(optarg);
+			int len = _wtoi(optarg);
 			config->wcap.EnableLimitLength = (len > 0);
 			config->wcap.LimitLength = len;
 			break;
 		}
-		case 'b':
+		case L'b':
 		{
-			int rate = atoi(optarg);
+			int rate = _wtoi(optarg);
 			if (rate > 0)
 			{
 				config->wcap.VideoBitrate = rate;
 			}
 			break;
 		}
-		case 'i':
-			strncpy(config->title, optarg, TITLE_SIZE);
+		case L'i':
+			wcsncpy(config->title, optarg, TITLE_SIZE);
 			config->title[TITLE_SIZE - 1] = '\0';
 			break;
 		default:

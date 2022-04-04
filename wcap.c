@@ -1477,7 +1477,7 @@ int cmdErrorMessage(LPCWSTR text)
 	return wprintf(L"%s\n", text);
 }
 
-int main(int argc, char* argv[])
+int wmain(int argc, wchar_t* argv[])
 {
 	if (!Capture_IsSupported())
 	{
@@ -1503,18 +1503,13 @@ int main(int argc, char* argv[])
 
 	QueryPerformanceFrequency(&gTickFreq);
 
-	const size_t cSize = strlen(config.title) + 1;
-	wchar_t* title = malloc(sizeof(wchar_t) * cSize);
-	mbstowcs(title, config.title, cSize);
-	HWND hwnd = findWindow(title);
+	HWND hwnd = findWindow(config.title);
 	
 	if (hwnd == NULL)
 	{
-		wprintf(L"Window with title \"%s\" not found.\n", title);
-		free(title);
+		wprintf(L"Window with title \"%s\" not found.\n", config.title);
 		ExitProcess(0);
 	}
-	free(title);
 
 	// restore windows if it is minimized.
 	if (IsIconic(hwnd))
@@ -1522,13 +1517,8 @@ int main(int argc, char* argv[])
 		OpenIcon(hwnd);
 	}
 
-	int pathLen = strlen(config.filepath) + 1;
-	wchar_t* filepath = malloc(sizeof(wchar_t) * pathLen);
-	mbstowcs(filepath, config.filepath, pathLen);
-
-	if (!captureForWindow(hwnd, filepath))
+	if (!captureForWindow(hwnd, config.filepath))
 	{
-		free(filepath);
 		ExitProcess(0);
 	}
 
@@ -1552,7 +1542,6 @@ int main(int argc, char* argv[])
 			if (c == 'q' || c == 'Q')
 			{
 				StopRecording();
-				free(filepath);
 				return 0;
 			}
 		}
@@ -1572,11 +1561,9 @@ int main(int argc, char* argv[])
 			break;
 		case WM_WCAP_STOP_CAPTURE:
 			StopRecording();
-			free(filepath);
 			return 0;
 		}
 	}
 
-	free(filepath);
 	return 0;
 }
