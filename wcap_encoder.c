@@ -11,6 +11,11 @@
 
 #define MFT64(high, low) (((UINT64)high << 32) | (low))
 
+int errorMessage(LPCWSTR text)
+{
+	return MessageBoxW(NULL, text, WCAP_TITLE, MB_ICONERROR);
+}
+
 static HRESULT STDMETHODCALLTYPE Encoder__QueryInterface(IMFAsyncCallback* this, REFIID riid, void** Object)
 {
 	if (Object == NULL)
@@ -137,6 +142,7 @@ void Encoder_Init(Encoder* Encoder)
 	HR(MFStartup(MF_VERSION, MFSTARTUP_LITE));
 	Encoder->VideoSampleCallback.lpVtbl = &Encoder__VideoSampleCallbackVtbl;
 	Encoder->AudioSampleCallback.lpVtbl = &Encoder__AudioSampleCallbackVtbl;
+	Encoder->ErrorMessage = errorMessage;
 }
 
 BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, const EncoderConfig* Config)
@@ -251,7 +257,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 
 		if (FAILED(hr))
 		{
-			MessageBoxW(NULL, L"Cannot create output mp4 file!", WCAP_TITLE, MB_ICONERROR);
+			Encoder->ErrorMessage(L"Cannot create output mp4 file!");
 			goto bail;
 		}
 	}
@@ -291,7 +297,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 
 		if (FAILED(hr))
 		{
-			MessageBoxW(NULL, L"Cannot configure video encoder!", WCAP_TITLE, MB_ICONERROR);
+			Encoder->ErrorMessage(L"Cannot configure video encoder!");
 			goto bail;
 		}
 	}
@@ -314,7 +320,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 
 		if (FAILED(hr))
 		{
-			MessageBoxW(NULL, L"Cannot configure video encoder input!", WCAP_TITLE, MB_ICONERROR);
+			Encoder->ErrorMessage(L"Cannot configure video encoder input!");
 			goto bail;
 		}
 	}
@@ -402,7 +408,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 
 			if (FAILED(hr))
 			{
-				MessageBoxW(NULL, L"Cannot configure audio encoder output!", WCAP_TITLE, MB_ICONERROR);
+				Encoder->ErrorMessage(L"Cannot configure audio encoder output!");
 				goto bail;
 			}
 		}
@@ -422,7 +428,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 
 			if (FAILED(hr))
 			{
-				MessageBoxW(NULL, L"Cannot configure audio encoder input!", WCAP_TITLE, MB_ICONERROR);
+				Encoder->ErrorMessage(L"Cannot configure audio encoder input!");
 				goto bail;
 			}
 		}
@@ -431,7 +437,7 @@ BOOL Encoder_Start(Encoder* Encoder, ID3D11Device* Device, LPWSTR FileName, cons
 	hr = IMFSinkWriter_BeginWriting(Writer);
 	if (FAILED(hr))
 	{
-		MessageBoxW(NULL, L"Cannot start writing to mp4 file!", WCAP_TITLE, MB_ICONERROR);
+		Encoder->ErrorMessage(L"Cannot start writing to mp4 file!");
 		goto bail;
 	}
 

@@ -4,6 +4,10 @@
 #include "wcap_capture.h"
 #include "wcap_encoder.h"
 
+#include "find_window.h"
+#include "arg_config.h"
+#include <wchar.h>
+
 #include <dxgi1_6.h>
 #include <d3d11.h>
 #include <dwmapi.h>
@@ -89,6 +93,8 @@ static UINT64 gRecordingNextEncode;
 static UINT64 gRecordingNextTooltip;
 static EXECUTION_STATE gRecordingState;
 static WCHAR gRecordingPath[MAX_PATH];
+static UINT_PTR gAudioTimer;
+static UINT_PTR gVideoTimer;
 
 // when selecting rectangle to record
 static HMONITOR gRectMonitor;
@@ -1379,4 +1385,198 @@ void WinMainCRTStartup()
 		TranslateMessage(&Message);
 		DispatchMessageW(&Message);
 	}
+}
+
+static BOOL StartSimpleRecording(ID3D11Device* Device, LPWSTR filepath)
+{
+	DWM_TIMING_INFO Info = { .cbSize = sizeof(Info) };
+	HR(DwmGetCompositionTimingInfo(NULL, &Info));
+
+	DWORD FramerateNum = Info.rateCompose.uiNumerator;
+	DWORD FramerateDen = Info.rateCompose.uiDenominator;
+	if (gConfig.VideoMaxFramerate > 0 && gConfig.VideoMaxFramerate * FramerateDen < FramerateNum)
+	{
+		// limit rate only if max framerate is specified and it is lower than compositor framerate
+		gRecordingLimitFramerate = gConfig.VideoMaxFramerate;
+		FramerateNum = gConfig.VideoMaxFramerate;
+		FramerateDen = 1;
+	}
+	else
+	{
+		gRecordingLimitFramerate = 0;
+	}
+
+	EncoderConfig EncConfig =
+	{
+		.Width = gCapture.Rect.right - gCapture.Rect.left,
+		.Height = gCapture.Rect.bottom - gCapture.Rect.top,
+		.FramerateNum = FramerateNum,
+		.FramerateDen = FramerateDen,
+		.Config = &gConfig,
+	};
+
+	if (gConfig.CaptureAudio)
+	{
+		if (!Audio_Start(&gAudio))
+		{
+			Capture_Stop(&gCapture);
+			ID3D11Device_Release(Device);
+			return FALSE;
+		}
+		EncConfig.AudioFormat = gAudio.Format;
+	}
+	
+	if (!Encoder_Start(&gEncoder, Device, filepath, &EncConfig))
+	{
+		if (gConfig.CaptureAudio)
+		{
+			Audio_Stop(&gAudio);
+		}
+		Capture_Stop(&gCapture);
+		ID3D11Device_Release(Device);
+		return FALSE;
+	}
+
+	gRecordingNextTooltip = 0;
+	gRecordingNextEncode = 0;
+	gRecordingDroppedFrames = 0;
+	Capture_Start(&gCapture, gConfig.MouseCursor);
+
+	if (gConfig.CaptureAudio)
+	{
+		gAudioTimer = SetTimer(gWindow, WCAP_AUDIO_CAPTURE_TIMER, WCAP_AUDIO_CAPTURE_INTERVAL, NULL);
+	}
+	gVideoTimer = SetTimer(gWindow, WCAP_VIDEO_UPDATE_TIMER, WCAP_VIDEO_UPDATE_INTERVAL, NULL);
+
+	gRecordingState = SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
+	gRecording = TRUE;
+
+	ID3D11Device_Release(Device);
+	return TRUE;
+}
+
+BOOL captureForWindow(HWND Window, LPWSTR filepath)
+{
+	ID3D11Device* Device = CreateDevice();
+	if (!Device)
+	{
+		return FALSE;
+	}
+
+	if (!Capture_CreateForWindow(&gCapture, Device, Window, TRUE))
+	{
+		ID3D11Device_Release(Device);
+		return FALSE;
+	}
+
+	return StartSimpleRecording(Device, filepath);
+}
+
+int cmdErrorMessage(LPCWSTR text)
+{
+	return wprintf(L"%s\n", text);
+}
+
+int main(int argc, char* argv[])
+{
+	if (!Capture_IsSupported())
+	{
+		puts("Windows 10 Version 1903, May 2019 Update (19H1) or newer is required!");
+		ExitProcess(0);
+	}
+
+	HR(CoInitializeEx(0, COINIT_APARTMENTTHREADED));
+
+	CmdConfig config;
+	if (!parseArgs(argc, argv, &config))
+	{
+		printUsage(argv[0]);
+		ExitProcess(0);
+	}
+	gConfig = config.wcap;
+
+	//Config_Load(&gConfig, gConfigPath);
+	Audio_Init(&gAudio);
+	Capture_Init(&gCapture, &OnCaptureClose, &OnCaptureFrame);
+	Encoder_Init(&gEncoder);
+	gEncoder.ErrorMessage = cmdErrorMessage;
+
+	QueryPerformanceFrequency(&gTickFreq);
+
+	const size_t cSize = strlen(config.title) + 1;
+	wchar_t* title = malloc(sizeof(wchar_t) * cSize);
+	mbstowcs(title, config.title, cSize);
+	HWND hwnd = findWindow(title);
+	
+	if (hwnd == NULL)
+	{
+		wprintf(L"Window with title \"%s\" not found.\n", title);
+		free(title);
+		ExitProcess(0);
+	}
+	free(title);
+
+	// restore windows if it is minimized.
+	if (IsIconic(hwnd))
+	{
+		OpenIcon(hwnd);
+	}
+
+	int pathLen = strlen(config.filepath) + 1;
+	wchar_t* filepath = malloc(sizeof(wchar_t) * pathLen);
+	mbstowcs(filepath, config.filepath, pathLen);
+
+	if (!captureForWindow(hwnd, filepath))
+	{
+		free(filepath);
+		ExitProcess(0);
+	}
+
+	// start message loop
+	for (;;)
+	{
+		MSG Message;
+		BOOL Result = GetMessageW(&Message, NULL, 0, 0);
+		if (Result == 0)
+		{
+			ExitProcess(0);
+		}
+		Assert(Result > 0);
+
+		TranslateMessage(&Message);
+		DispatchMessageW(&Message);
+
+		// listen to stdin for stop encoding.
+		if (_kbhit()) {
+			char c = _getch();
+			if (c == 'q' || c == 'Q')
+			{
+				StopRecording();
+				free(filepath);
+				return 0;
+			}
+		}
+		switch (Message.message)
+		{
+		case WM_TIMER:
+			if (Message.wParam == gAudioTimer)
+			{
+				EncodeCapturedAudio();
+			}
+			else if (Message.wParam == gVideoTimer)
+			{
+				LARGE_INTEGER Time;
+				QueryPerformanceCounter(&Time);
+				Encoder_Update(&gEncoder, Time.QuadPart, gTickFreq.QuadPart);
+			}
+			break;
+		case WM_WCAP_STOP_CAPTURE:
+			StopRecording();
+			free(filepath);
+			return 0;
+		}
+	}
+
+	free(filepath);
+	return 0;
 }

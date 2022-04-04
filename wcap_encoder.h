@@ -60,6 +60,8 @@ typedef struct Encoder {
 	DWORD AudioSampleRate;
 	DWORD AudioIndex; // next index to use
 
+	int (*ErrorMessage)(LPCWSTR lpText);
+
 } Encoder;
 
 typedef struct {
