@@ -1460,11 +1460,13 @@ BOOL captureForWindow(HWND Window, LPWSTR filepath)
 	ID3D11Device* Device = CreateDevice();
 	if (!Device)
 	{
+		puts("Cannot create D3D device");
 		return FALSE;
 	}
 
 	if (!Capture_CreateForWindow(&gCapture, Device, Window, TRUE))
 	{
+		puts("Cannot capture the window.");
 		ID3D11Device_Release(Device);
 		return FALSE;
 	}
