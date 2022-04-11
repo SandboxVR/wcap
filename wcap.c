@@ -1479,6 +1479,42 @@ int cmdErrorMessage(LPCWSTR text)
 	return wprintf(L"%s\n", text);
 }
 
+BOOL StdinOpen() {
+	HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+	DWORD bytes_left;
+	HR(PeekNamedPipe(handle, NULL, 0, NULL, &bytes_left, NULL));
+	return bytes_left;
+}
+
+BOOL detectTerminalQuit()
+{
+	if (_kbhit())
+	{
+		char c = _getch();
+		return c == 'q' || c == 'Q';
+	}
+	return FALSE;
+}
+
+BOOL detectPipeQuit()
+{
+	int bytes = StdinOpen();
+	if (bytes <= 0)
+	{
+		return FALSE;
+	}
+	if (bytes > 1000) { bytes = 1000; }
+	for (int i = 0; i < bytes; i++)
+	{
+		char c = getchar();
+		if (c == 'q' || c == 'Q')
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 int wmain(int argc, wchar_t* argv[])
 {
 	if (!Capture_IsSupported())
@@ -1524,6 +1560,8 @@ int wmain(int argc, wchar_t* argv[])
 		ExitProcess(0);
 	}
 
+	BOOL(*detectQuit)() = _isatty(_fileno(stdin)) ? detectTerminalQuit : detectPipeQuit;
+
 	// start message loop
 	for (;;)
 	{
@@ -1539,13 +1577,10 @@ int wmain(int argc, wchar_t* argv[])
 		DispatchMessageW(&Message);
 
 		// listen to stdin for stop encoding.
-		if (_kbhit()) {
-			char c = _getch();
-			if (c == 'q' || c == 'Q')
-			{
-				StopRecording();
-				return 0;
-			}
+		if (detectQuit())
+		{
+			StopRecording();
+			return 0;
 		}
 		switch (Message.message)
 		{
