@@ -15,6 +15,8 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <windowsx.h>
+#include <conio.h>
+#include <io.h>
 
 #pragma comment (lib, "ntdll.lib")
 #pragma comment (lib, "kernel32.lib")
@@ -1336,6 +1338,11 @@ void WinMainCRTStartup()
 	}
 }
 
+int cmdErrorMessage(LPCWSTR text)
+{
+	return wprintf(L"%s\n", text);
+}
+
 static BOOL StartSimpleRecording(ID3D11Device* Device, LPWSTR filepath)
 {
 	DWM_TIMING_INFO Info = { .cbSize = sizeof(Info) };
@@ -1366,20 +1373,21 @@ static BOOL StartSimpleRecording(ID3D11Device* Device, LPWSTR filepath)
 
 	if (gConfig.CaptureAudio)
 	{
-		if (!Audio_Start(&gAudio))
+		if (!AudioCapture_Start(&gAudio, AUDIO_CAPTURE_BUFFER_DURATION_100NS))
 		{
+			cmdErrorMessage(L"Cannot capture audio!");
 			Capture_Stop(&gCapture);
 			ID3D11Device_Release(Device);
 			return FALSE;
 		}
-		EncConfig.AudioFormat = gAudio.Format;
+		EncConfig.AudioFormat = gAudio.format;
 	}
 	
 	if (!Encoder_Start(&gEncoder, Device, filepath, &EncConfig))
 	{
 		if (gConfig.CaptureAudio)
 		{
-			Audio_Stop(&gAudio);
+			AudioCapture_Stop(&gAudio);
 		}
 		Capture_Stop(&gCapture);
 		ID3D11Device_Release(Device);
@@ -1423,11 +1431,6 @@ BOOL captureForWindow(HWND Window, LPWSTR filepath)
 	return StartSimpleRecording(Device, filepath);
 }
 
-int cmdErrorMessage(LPCWSTR text)
-{
-	return wprintf(L"%s\n", text);
-}
-
 BOOL StdinOpen() {
 	HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
 	DWORD bytes_left;
@@ -1469,7 +1472,7 @@ int wmain(int argc, wchar_t* argv[])
 	if (!Capture_IsSupported())
 	{
 		puts("Windows 10 Version 1903, May 2019 Update (19H1) or newer is required!");
-		ExitProcess(0);
+		ExitProcess(1);
 	}
 
 	HR(CoInitializeEx(0, COINIT_APARTMENTTHREADED));
@@ -1478,12 +1481,11 @@ int wmain(int argc, wchar_t* argv[])
 	if (!parseArgs(argc, argv, &config))
 	{
 		printUsage(argv[0]);
-		ExitProcess(0);
+		ExitProcess(1);
 	}
 	gConfig = config.wcap;
 
 	//Config_Load(&gConfig, gConfigPath);
-	Audio_Init(&gAudio);
 	Capture_Init(&gCapture, &OnCaptureClose, &OnCaptureFrame);
 	Encoder_Init(&gEncoder);
 	gEncoder.ErrorMessage = cmdErrorMessage;
@@ -1495,7 +1497,7 @@ int wmain(int argc, wchar_t* argv[])
 	if (hwnd == NULL)
 	{
 		wprintf(L"Window with title \"%s\" not found.\n", config.title);
-		ExitProcess(0);
+		ExitProcess(1);
 	}
 
 	// restore windows if it is minimized.
@@ -1506,7 +1508,7 @@ int wmain(int argc, wchar_t* argv[])
 
 	if (!captureForWindow(hwnd, config.filepath))
 	{
-		ExitProcess(0);
+		ExitProcess(1);
 	}
 
 	BOOL(*detectQuit)() = _isatty(_fileno(stdin)) ? detectTerminalQuit : detectPipeQuit;

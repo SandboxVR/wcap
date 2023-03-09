@@ -60,7 +60,6 @@ BOOL parseArgs(int argc, wchar_t* argv[], CmdConfig* config)
 	config->wcap.MouseCursor = FALSE;
 	config->wcap.VideoMaxFramerate = 25;
 	config->wcap.OpenFolder = FALSE;
-	config->wcap.ShowNotifications = FALSE;
 
 	// start parse argument with getopt_log
 	for (;;)
