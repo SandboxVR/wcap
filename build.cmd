@@ -18,15 +18,15 @@ if "%VSCMD_ARG_TGT_ARCH%" neq "x64" (
 
 if "%1" equ "debug" (
   set CL=/MTd /Od /Zi /D_DEBUG /RTC1 /Fdwcap.pdb /fsanitize=address
-  set LINK=/DEBUG libucrtd.lib libvcruntimed.lib
+  set LINK=/DEBUG
 ) else (
   set CL=/GL /O1 /DNDEBUG /GS-
-  set LINK=/LTCG /OPT:REF /OPT:ICF libvcruntime.lib
+  set LINK=/LTCG /OPT:REF /OPT:ICF ucrt.lib libvcruntime.lib
 )
 
 fxc.exe /nologo /T cs_5_0 /E Resize  /O3 /WX /Fh wcap_resize_shader.h  /Vn ResizeShaderBytes  /Qstrip_reflect /Qstrip_debug /Qstrip_priv wcap_shaders.hlsl
 fxc.exe /nologo /T cs_5_0 /E Convert /O3 /WX /Fh wcap_convert_shader.h /Vn ConvertShaderBytes /Qstrip_reflect /Qstrip_debug /Qstrip_priv wcap_shaders.hlsl
 
 rc.exe /nologo wcap.rc
-cl.exe /nologo /MP *.c /Fewcap.exe wcap.res /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:wcap.manifest /SUBSYSTEM:CONSOLE /FIXED /merge:_RDATA=.rdata
+cl.exe /nologo /W3 /WX /MP *.c /Fewcap.exe wcap.res /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:wcap.manifest /SUBSYSTEM:CONSOLE /FIXED /merge:_RDATA=.rdata
 del *.obj *.res >nul

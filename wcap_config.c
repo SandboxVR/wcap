@@ -4,6 +4,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <knownfolders.h>
+#include <windowsx.h>
 
 #define INI_SECTION L"wcap"
 
@@ -11,7 +12,6 @@
 #define ID_OK                  IDOK     // 1
 #define ID_CANCEL              IDCANCEL // 2
 #define ID_DEFAULTS            3
-#define ID_SHOW_NOTIFICATIONS  10
 #define ID_MOUSE_CURSOR        20
 #define ID_ONLY_CLIENT_AREA    30
 #define ID_CAPTURE_AUDIO       40
@@ -69,9 +69,15 @@
 static const DWORD gAudioBitrates[] = { 96, 128, 160, 192, 0 };
 static const DWORD gAudioSamplerates[] = { 44100, 48000, 0 };
 
-static const LPCWSTR gVideoCodecs[] = { L"H264", L"H265", NULL };
-static const LPCWSTR gVideoProfiles[] = { L"Base", L"Main", L"High", NULL };
+static const LPCWSTR gVideoCodecs[] = { L"H264", L"H265", NULL};
+static const LPCWSTR gVideoProfiles[] = { L"Base", L"Main", L"High", L"Main10", NULL };
 static const LPCWSTR gAudioCodecs[] = { L"AAC", L"FLAC", NULL };
+
+static const int gValidVideoProfiles[][4] =
+{
+	{ CONFIG_VIDEO_BASE, CONFIG_VIDEO_MAIN, CONFIG_VIDEO_HIGH, -1 },
+	{ CONFIG_VIDEO_MAIN, CONFIG_VIDEO_MAIN_10, -1 },
+};
 
 // currently open dialog window
 static HWND gDialogWindow;
@@ -83,49 +89,78 @@ struct {
 	int Control;
 } gConfigShortcut;
 
-static void Config__UpdateVideoProfiles(HWND Window, int Codec)
+static void Config__UpdateVideoProfiles(HWND Window, DWORD Codec)
 {
-	SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_RESETCONTENT, 0, 0);
+	HWND Control = GetDlgItem(Window, ID_VIDEO_PROFILE);
+	ComboBox_ResetContent(Control);
 
-	int Count = 0;
 	if (Codec == CONFIG_VIDEO_H264)
 	{
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_ADDSTRING, 0, (LPARAM)L"Base");
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_ADDSTRING, 0, (LPARAM)L"Main");
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_ADDSTRING, 0, (LPARAM)L"High");
-		Count = 3;
+		ComboBox_AddString(Control, L"Base");
+		ComboBox_AddString(Control, L"Main");
+		ComboBox_AddString(Control, L"High");
+
+		ComboBox_SetItemData(Control, 0, CONFIG_VIDEO_BASE);
+		ComboBox_SetItemData(Control, 1, CONFIG_VIDEO_MAIN);
+		ComboBox_SetItemData(Control, 2, CONFIG_VIDEO_HIGH);
+		ComboBox_SetCurSel(Control, 2);
 	}
 	else if (Codec == CONFIG_VIDEO_H265)
 	{
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_ADDSTRING, 0, (LPARAM)L"Main");
-		Count = 1;
-	}
+		ComboBox_AddString(Control, L"Main (8-bit)");
+		ComboBox_AddString(Control, L"Main10 (10-bit)");
 
-	SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_SETCURSEL, Count - 1, 0);
+		ComboBox_SetItemData(Control, 0, CONFIG_VIDEO_MAIN);
+		ComboBox_SetItemData(Control, 1, CONFIG_VIDEO_MAIN_10);
+		ComboBox_SetCurSel(Control, 1);
+	}
 }
 
-static void Config__UpdateAudioBitrate(HWND Window, int Codec, Config* Config)
+static void Config__SelectVideoProfile(HWND Window, DWORD Codec, DWORD Profile)
 {
+	HWND Control = GetDlgItem(Window, ID_VIDEO_PROFILE);
+	DWORD Count = (DWORD)ComboBox_GetCount(Control);
+	for (DWORD i=0; i<Count; i++)
+	{
+		DWORD Item = (DWORD)ComboBox_GetItemData(Control, i);
+		if (Item == Profile)
+		{
+			ComboBox_SetCurSel(Control, i);
+			return;
+		}
+	}
+	ComboBox_SetCurSel(Control, Count - 1);
+}
+
+static DWORD Config__GetSelectedVideoProfile(HWND Window)
+{
+	HWND Control = GetDlgItem(Window, ID_VIDEO_PROFILE);
+	return (DWORD)ComboBox_GetItemData(Control, ComboBox_GetCurSel(Control));
+}
+
+static void Config__UpdateAudioBitrate(HWND Window, DWORD Codec, DWORD AudioBitrate)
+{
+	HWND Control = GetDlgItem(Window, ID_AUDIO_BITRATE);
+	ComboBox_ResetContent(Control);
+
 	if (Codec == CONFIG_AUDIO_AAC)
 	{
-		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_RESETCONTENT, 0, 0);
 		for (const DWORD* Bitrate = gAudioBitrates; *Bitrate; Bitrate++)
 		{
 			WCHAR Text[64];
-			wsprintfW(Text, L"%u", *Bitrate);
-			SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_ADDSTRING, 0, (LPARAM)Text);
+			StrFormat(Text, L"%u", *Bitrate);
+			ComboBox_AddString(Control, Text);
 		}
 
 		WCHAR Text[64];
-		wsprintfW(Text, L"%u", Config->AudioBitrate);
-		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_SELECTSTRING, -1, (LPARAM)Text);
+		StrFormat(Text, L"%u", AudioBitrate);
+		ComboBox_SelectString(Control, -1, Text);
+
 	}
 	else if (Codec == CONFIG_AUDIO_FLAC)
 	{
-		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_RESETCONTENT, 0, 0);
-		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_ADDSTRING, 0, (LPARAM)L"auto");
-		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_SETCURSEL, 0, 0);
-		return;
+		ComboBox_AddString(Control, L"auto");
+		ComboBox_SetCurSel(Control, 0);
 	}
 }
 
@@ -149,7 +184,7 @@ static void Config__FormatKey(DWORD KeyMod, WCHAR* Text)
 	UINT ScanCode = MapVirtualKeyW(HOT_GET_KEY(KeyMod), MAPVK_VK_TO_VSC);
 	if (GetKeyNameTextW(ScanCode << 16, KeyText, _countof(KeyText)) == 0)
 	{
-		wsprintfW(KeyText, L"[0x%02x]", HOT_GET_KEY(KeyMod));
+		StrFormat(KeyText, L"[0x%02x]", HOT_GET_KEY(KeyMod));
 	}
 
 	StrCatW(Text, KeyText);
@@ -158,10 +193,9 @@ static void Config__FormatKey(DWORD KeyMod, WCHAR* Text)
 static void Config__SetDialogValues(HWND Window, Config* Config)
 {
 	Config__UpdateVideoProfiles(Window, Config->VideoCodec);
-	Config__UpdateAudioBitrate(Window, Config->AudioCodec, Config);
+	Config__UpdateAudioBitrate(Window, Config->AudioCodec, Config->AudioBitrate);
 
 	// capture
-	CheckDlgButton(Window, ID_SHOW_NOTIFICATIONS, Config->ShowNotifications);
 	CheckDlgButton(Window, ID_MOUSE_CURSOR,       Config->MouseCursor);
 	CheckDlgButton(Window, ID_ONLY_CLIENT_AREA,   Config->OnlyClientArea);
 	CheckDlgButton(Window, ID_CAPTURE_AUDIO,      Config->CaptureAudio);
@@ -179,14 +213,7 @@ static void Config__SetDialogValues(HWND Window, Config* Config)
 
 	// video
 	SendDlgItemMessageW(Window, ID_VIDEO_CODEC, CB_SETCURSEL, Config->VideoCodec, 0);
-	if (Config->VideoCodec == CONFIG_VIDEO_H264)
-	{
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_SETCURSEL, Config->VideoProfile, 0);
-	}
-	else if (Config->VideoCodec == CONFIG_VIDEO_H265)
-	{
-		SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_SETCURSEL, 0, 0);
-	}
+	Config__SelectVideoProfile(Window, Config->VideoCodec, Config->VideoProfile);
 	SetDlgItemInt(Window, ID_VIDEO_MAX_WIDTH,     Config->VideoMaxWidth,     FALSE);
 	SetDlgItemInt(Window, ID_VIDEO_MAX_HEIGHT,    Config->VideoMaxHeight,    FALSE);
 	SetDlgItemInt(Window, ID_VIDEO_MAX_FRAMERATE, Config->VideoMaxFramerate, FALSE);
@@ -196,12 +223,12 @@ static void Config__SetDialogValues(HWND Window, Config* Config)
 	SendDlgItemMessageW(Window, ID_AUDIO_CODEC, CB_SETCURSEL, Config->AudioCodec, 0);
 	SendDlgItemMessageW(Window, ID_AUDIO_CHANNELS, CB_SETCURSEL, Config->AudioChannels - 1, 0);
 	WCHAR Text[64];
-	wsprintfW(Text, L"%u", Config->AudioSamplerate);
+	StrFormat(Text, L"%u", Config->AudioSamplerate);
 	SendDlgItemMessageW(Window, ID_AUDIO_SAMPLERATE, CB_SELECTSTRING, -1, (LPARAM)Text);
 
 	if (Config->AudioCodec == CONFIG_AUDIO_AAC)
 	{
-		wsprintfW(Text, L"%u", Config->AudioBitrate);
+		StrFormat(Text, L"%u", Config->AudioBitrate);
 		SendDlgItemMessageW(Window, ID_AUDIO_BITRATE, CB_SELECTSTRING, -1, (LPARAM)Text);
 	}
 	else if (Config->AudioCodec == CONFIG_AUDIO_FLAC)
@@ -325,7 +352,6 @@ static LRESULT CALLBACK Config__DialogProc(HWND Window, UINT Message, WPARAM WPa
 		if (Control == ID_OK)
 		{
 			// capture
-			Config->ShowNotifications = IsDlgButtonChecked(Window, ID_SHOW_NOTIFICATIONS);
 			Config->MouseCursor       = IsDlgButtonChecked(Window, ID_MOUSE_CURSOR);
 			Config->OnlyClientArea    = IsDlgButtonChecked(Window, ID_ONLY_CLIENT_AREA);
 			Config->CaptureAudio      = IsDlgButtonChecked(Window, ID_CAPTURE_AUDIO);
@@ -342,10 +368,7 @@ static LRESULT CALLBACK Config__DialogProc(HWND Window, UINT Message, WPARAM WPa
 			Config->LimitSize         = GetDlgItemInt(Window,      ID_LIMIT_SIZE + 1,   NULL, FALSE);
 			// video
 			Config->VideoCodec        = (DWORD)SendDlgItemMessageW(Window, ID_VIDEO_CODEC,   CB_GETCURSEL, 0, 0);
-			if (Config->VideoCodec == CONFIG_VIDEO_H264)
-			{
-				Config->VideoProfile = (DWORD)SendDlgItemMessageW(Window, ID_VIDEO_PROFILE, CB_GETCURSEL, 0, 0);
-			}
+			Config->VideoProfile      = Config__GetSelectedVideoProfile(Window);
 			Config->VideoMaxWidth     = GetDlgItemInt(Window, ID_VIDEO_MAX_WIDTH,     NULL, FALSE);
 			Config->VideoMaxHeight    = GetDlgItemInt(Window, ID_VIDEO_MAX_HEIGHT,    NULL, FALSE);
 			Config->VideoMaxFramerate = GetDlgItemInt(Window, ID_VIDEO_MAX_FRAMERATE, NULL, FALSE);
@@ -386,13 +409,13 @@ static LRESULT CALLBACK Config__DialogProc(HWND Window, UINT Message, WPARAM WPa
 		else if (Control == ID_VIDEO_CODEC && HIWORD(WParam) == CBN_SELCHANGE)
 		{
 			LRESULT Index = SendDlgItemMessageW(Window, ID_VIDEO_CODEC, CB_GETCURSEL, 0, 0);
-			Config__UpdateVideoProfiles(Window, (int)Index);
+			Config__UpdateVideoProfiles(Window, (DWORD)Index);
 			return TRUE;
 		}
 		else if (Control == ID_AUDIO_CODEC && HIWORD(WParam) == CBN_SELCHANGE)
 		{
 			LRESULT Index = SendDlgItemMessageW(Window, ID_AUDIO_CODEC, CB_GETCURSEL, 0, 0);
-			Config__UpdateAudioBitrate(Window, (int)Index, Config);
+			Config__UpdateAudioBitrate(Window, (DWORD)Index, Config->AudioBitrate);
 			return TRUE;
 		}
 		else if (Control == ID_GPU_ENCODER && HIWORD(WParam) == BN_CLICKED)
@@ -680,7 +703,6 @@ void Config_Defaults(Config* Config)
 	*Config = (struct Config)
 	{
 		// capture
-		.ShowNotifications = TRUE,
 		.MouseCursor = TRUE,
 		.OnlyClientArea = TRUE,
 		.CaptureAudio = TRUE,
@@ -765,10 +787,24 @@ static void Config__GetStr(LPCWSTR FileName, LPCWSTR Key, DWORD* Value, const LP
 	}
 }
 
+static void Config__ValidateVideoProfile(Config* Config)
+{
+	const int* Profiles = gValidVideoProfiles[Config->VideoCodec];
+	DWORD LastProfile;
+	for (int i=0; Profiles[i] != -1; i++)
+	{
+		LastProfile = Profiles[i];
+		if (Config->VideoProfile == LastProfile)
+		{
+			return;
+		}
+	}
+	Config->VideoProfile = LastProfile;
+}
+
 void Config_Load(Config* Config, LPCWSTR FileName)
 {
 	// capture
-	Config__GetBool(FileName, L"ShowNotifications",        &Config->ShowNotifications);
 	Config__GetBool(FileName, L"MouseCursor",              &Config->MouseCursor);
 	Config__GetBool(FileName, L"OnlyClientArea",           &Config->OnlyClientArea);
 	Config__GetBool(FileName, L"CaptureAudio",             &Config->CaptureAudio);
@@ -800,19 +836,20 @@ void Config_Load(Config* Config, LPCWSTR FileName)
 	Config__GetInt(FileName, L"ShortcutMonitor", &Config->ShortcutMonitor, NULL);
 	Config__GetInt(FileName, L"ShortcutWindow",  &Config->ShortcutWindow,  NULL);
 	Config__GetInt(FileName, L"ShortcutRect",    &Config->ShortcutRect,    NULL);
+
+	Config__ValidateVideoProfile(Config);
 }
 
-static Config__WriteInt(LPCWSTR FileName, LPCWSTR Key, DWORD Value)
+static void Config__WriteInt(LPCWSTR FileName, LPCWSTR Key, DWORD Value)
 {
 	WCHAR Text[64];
-	wsprintfW(Text, L"%u", Value);
+	StrFormat(Text, L"%u", Value);
 	WritePrivateProfileStringW(INI_SECTION, Key, Text, FileName);
 }
 
 void Config_Save(Config* Config, LPCWSTR FileName)
 {
 	// capture
-	WritePrivateProfileStringW(INI_SECTION, L"ShowNotifications",         Config->ShowNotifications        ? L"1" : L"0", FileName);
 	WritePrivateProfileStringW(INI_SECTION, L"MouseCursor",               Config->MouseCursor              ? L"1" : L"0", FileName);
 	WritePrivateProfileStringW(INI_SECTION, L"OnlyClientArea",            Config->OnlyClientArea           ? L"1" : L"0", FileName);
 	WritePrivateProfileStringW(INI_SECTION, L"CaptureAudio",              Config->CaptureAudio             ? L"1" : L"0", FileName);
@@ -864,7 +901,6 @@ BOOL Config_ShowDialog(Config* Config)
 				.Rect = { 0, 0, COL00W, ROW0H },
 				.Items = (Config__DialogItem[])
 				{
-					{ "Show &Notifications", ID_SHOW_NOTIFICATIONS, ITEM_CHECKBOX                     },
 					{ "&Mouse Cursor",       ID_MOUSE_CURSOR,       ITEM_CHECKBOX                     },
 					{ "Only &Client Area",   ID_ONLY_CLIENT_AREA,   ITEM_CHECKBOX                     },
 					{ "Capture Au&dio",      ID_CAPTURE_AUDIO,      ITEM_CHECKBOX                     },

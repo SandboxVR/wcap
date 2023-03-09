@@ -1,6 +1,6 @@
 #include "wcap.h"
 #include "wcap_config.h"
-#include "wcap_audio.h"
+#include "wcap_audio_capture.h"
 #include "wcap_capture.h"
 #include "wcap_encoder.h"
 
@@ -16,6 +16,7 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
+#pragma comment (lib, "ntdll.lib")
 #pragma comment (lib, "kernel32.lib")
 #pragma comment (lib, "user32.lib")
 #pragma comment (lib, "gdi32.lib")
@@ -34,6 +35,7 @@
 #pragma comment (lib, "wmcodecdspuuid.lib")
 #pragma comment (lib, "avrt.lib")
 #pragma comment (lib, "uxtheme.lib")
+#pragma comment (lib, "WindowsApp.lib")
 
 // this is needed to be able to use Nvidia Media Foundation encoders on Optimus systems
 __declspec(dllexport) DWORD NvOptimusEnablement = 1;
@@ -72,6 +74,9 @@ __declspec(dllexport) DWORD NvOptimusEnablement = 1;
 #define WCAP_UI_FONT_SIZE 16
 
 #define WCAP_RECT_BORDER 2
+
+// 1 second, we'll be reading it every 100msec
+#define AUDIO_CAPTURE_BUFFER_DURATION_100NS 10 * 1000 * 1000
 
 // constants
 static WCHAR gConfigPath[MAX_PATH];
@@ -112,7 +117,7 @@ static int gRectResize;
 // globals
 static HWND gWindow;
 static Config gConfig;
-static Audio gAudio;
+static AudioCapture gAudio;
 static Capture gCapture;
 static Encoder gEncoder;
 
@@ -186,17 +191,17 @@ static void ShowFileInFolder(LPCWSTR Filename)
 	if (Filename[0] && SUCCEEDED(SHParseDisplayName(Filename, NULL, &List, 0, &Flags)))
 	{
 		HR(SHOpenFolderAndSelectItems(List, 0, NULL, 0));
-		CoTaskMemFree((LPVOID)List);
+		CoTaskMemFree(List);
 	}
 }
 
-static void StartRecording(ID3D11Device* Device, LPCWSTR Caption)
+static void StartRecording(ID3D11Device* Device)
 {
 	SYSTEMTIME Time;
 	GetLocalTime(&Time);
 
 	WCHAR Filename[256];
-	wsprintfW(Filename, L"%04u%02u%02u_%02u%02u%02u.mp4", Time.wYear, Time.wMonth, Time.wDay, Time.wHour, Time.wMinute, Time.wSecond);
+	StrFormat(Filename, L"%04u%02u%02u_%02u%02u%02u.mp4", Time.wYear, Time.wMonth, Time.wDay, Time.wHour, Time.wMinute, Time.wSecond);
 
 	StrCpyW(gRecordingPath, gConfig.OutputFolder);
 	PathAppendW(gRecordingPath, Filename);
@@ -229,21 +234,21 @@ static void StartRecording(ID3D11Device* Device, LPCWSTR Caption)
 
 	if (gConfig.CaptureAudio)
 	{
-		if (!Audio_Start(&gAudio))
+		if (!AudioCapture_Start(&gAudio, AUDIO_CAPTURE_BUFFER_DURATION_100NS))
 		{
 			ShowNotification(L"Cannot capture audio!", L"Cannot Start Recording", NIIF_WARNING);
 			Capture_Stop(&gCapture);
 			ID3D11Device_Release(Device);
 			return;
 		}
-		EncConfig.AudioFormat = gAudio.Format;
+		EncConfig.AudioFormat = gAudio.format;
 	}
 
 	if (!Encoder_Start(&gEncoder, Device, gRecordingPath, &EncConfig))
 	{
 		if (gConfig.CaptureAudio)
 		{
-			Audio_Stop(&gAudio);
+			AudioCapture_Stop(&gAudio);
 		}
 		Capture_Stop(&gCapture);
 		ID3D11Device_Release(Device);
@@ -261,10 +266,6 @@ static void StartRecording(ID3D11Device* Device, LPCWSTR Caption)
 	}
 	SetTimer(gWindow, WCAP_VIDEO_UPDATE_TIMER, WCAP_VIDEO_UPDATE_INTERVAL, NULL);
 
-	if (gConfig.ShowNotifications)
-	{
-		ShowNotification(Caption, L"Recording Started", NIIF_INFO);
-	}
 	UpdateTrayIcon(gIcon2);
 	gRecordingState = SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
 	gRecording = TRUE;
@@ -280,28 +281,26 @@ static void EncodeCapturedAudio(void)
 		return;
 	}
 
-	LPVOID Data;
-	UINT32 FrameCount;
-	UINT64 Time;
-	while (Audio_GetNextBuffer(&gAudio, &Data, &FrameCount, &Time))
+	AudioCaptureData data;
+	while (AudioCapture_GetData(&gAudio, &data))
 	{
-		UINT32 FramesToEncode = FrameCount;
-		if (Time < gEncoder.StartTime)
+		UINT32 FramesToEncode = (UINT32)data.count;
+		if (data.time < gEncoder.StartTime)
 		{
-			const UINT32 SampleRate = gAudio.Format->nSamplesPerSec;
-			const UINT32 BytesPerFrame = gAudio.Format->nBlockAlign;
+			const UINT32 SampleRate = gAudio.format->nSamplesPerSec;
+			const UINT32 BytesPerFrame = gAudio.format->nBlockAlign;
 
 			// figure out how much time (100nsec units) and frame count to skip from current buffer
-			UINT64 TimeToSkip = gEncoder.StartTime - Time;
+			UINT64 TimeToSkip = gEncoder.StartTime - data.time;
 			UINT32 FramesToSkip = (UINT32)((TimeToSkip * SampleRate - 1) / MF_UNITS_PER_SECOND + 1);
 			if (FramesToSkip < FramesToEncode)
 			{
 				// need to skip part of captured data
-				Time += FramesToSkip * MF_UNITS_PER_SECOND / SampleRate;
+				data.time += FramesToSkip * MF_UNITS_PER_SECOND / SampleRate;
 				FramesToEncode -= FramesToSkip;
-				if (Data)
+				if (data.samples)
 				{
-					Data = (BYTE*)Data + FramesToSkip * BytesPerFrame;
+					data.samples = (BYTE*)data.samples + FramesToSkip * BytesPerFrame;
 				}
 			}
 			else
@@ -312,10 +311,10 @@ static void EncodeCapturedAudio(void)
 		}
 		if (FramesToEncode != 0)
 		{
-			Assert(Time >= gEncoder.StartTime);
-			Encoder_NewSamples(&gEncoder, Data, FramesToEncode, Time, gTickFreq.QuadPart);
+			Assert(data.time >= gEncoder.StartTime);
+			Encoder_NewSamples(&gEncoder, data.samples, FramesToEncode, data.time, gTickFreq.QuadPart);
 		}
-		Audio_ReleaseBuffer(&gAudio, FrameCount);
+		AudioCapture_ReleaseData(&gAudio, &data);
 	}
 }
 
@@ -327,9 +326,9 @@ static void StopRecording(void)
 	if (gConfig.CaptureAudio)
 	{
 		KillTimer(gWindow, WCAP_AUDIO_CAPTURE_TIMER);
-		Audio_Flush(&gAudio);
+		AudioCapture_Flush(&gAudio);
 		EncodeCapturedAudio();
-		Audio_Stop(&gAudio);
+		AudioCapture_Stop(&gAudio);
 	}
 	KillTimer(gWindow, WCAP_VIDEO_UPDATE_TIMER);
 
@@ -344,14 +343,7 @@ static void StopRecording(void)
 	SetWindowLongW(gWindow, GWL_EXSTYLE, 0);
 
 	UpdateTrayIcon(gIcon1);
-	if (gConfig.ShowNotifications)
-	{
-		ShowNotification(PathFindFileNameW(gRecordingPath), L"Recording Finished", NIIF_INFO);
-	}
-	else
-	{
-		UpdateTrayTitle(WCAP_TITLE);
-	}
+	UpdateTrayTitle(WCAP_TITLE);
 }
 
 static ID3D11Device* CreateDevice(void)
@@ -395,6 +387,14 @@ static ID3D11Device* CreateDevice(void)
 	{
 		IDXGIAdapter_Release(Adapter);
 	}
+		
+#ifdef _DEBUG
+	ID3D11InfoQueue* Info;
+	HR(ID3D11Device_QueryInterface(Device, &IID_ID3D11InfoQueue, &Info));
+	ID3D11InfoQueue_SetBreakOnSeverity(Info, D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+	ID3D11InfoQueue_SetBreakOnSeverity(Info, D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+	ID3D11InfoQueue_Release(Info);
+#endif
 
 	return Device;
 }
@@ -446,10 +446,7 @@ static void CaptureWindow(void)
 		return;
 	}
 
-	WCHAR WindowTitle[1024];
-	GetWindowTextW(Window, WindowTitle, _countof(WindowTitle));
-
-	StartRecording(Device, WindowTitle);
+	StartRecording(Device);
 }
 
 static void CaptureMonitor(void)
@@ -476,53 +473,7 @@ static void CaptureMonitor(void)
 		return;
 	}
 
-	MONITORINFOEXW Info = { .cbSize = sizeof(Info) };
-	GetMonitorInfoW(Monitor, (LPMONITORINFO)&Info);
-
-	WCHAR MonitorName[128];
-	MonitorName[0] = 0;
-
-	DISPLAYCONFIG_PATH_INFO DisplayPaths[32];
-	DISPLAYCONFIG_MODE_INFO DisplayModes[32];
-	UINT32 PathCount = _countof(DisplayPaths);
-	UINT32 ModeCount = _countof(DisplayModes);
-
-	// try to get actual monitor name
-	if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &PathCount, DisplayPaths, &ModeCount, DisplayModes, NULL) == ERROR_SUCCESS)
-	{
-		for (UINT32 i = 0; i < PathCount; i++)
-		{
-			const DISPLAYCONFIG_PATH_INFO* Path = &DisplayPaths[i];
-
-			DISPLAYCONFIG_SOURCE_DEVICE_NAME SourceName =
-			{
-				.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-				.header.size = sizeof(SourceName),
-				.header.adapterId = Path->sourceInfo.adapterId,
-				.header.id = Path->sourceInfo.id,
-			};
-
-			if (DisplayConfigGetDeviceInfo(&SourceName.header) == ERROR_SUCCESS && StrCmpW(Info.szDevice, SourceName.viewGdiDeviceName) == 0)
-			{
-				DISPLAYCONFIG_TARGET_DEVICE_NAME TargetName =
-				{
-					.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
-					.header.size = sizeof(TargetName),
-					.header.adapterId = Path->sourceInfo.adapterId,
-					.header.id = Path->targetInfo.id,
-				};
-
-				if (DisplayConfigGetDeviceInfo(&TargetName.header) == ERROR_SUCCESS)
-				{
-					wsprintfW(MonitorName, L"%s - %s", Info.szDevice, TargetName.monitorFriendlyDeviceName);
-					break;
-				}
-			}
-		}
-	}
-
-	// if cannot get monitor name, just use device name
-	StartRecording(Device, MonitorName[0] ? MonitorName : Info.szDevice);
+	StartRecording(Device);
 }
 
 static void CaptureRectangleInit(void)
@@ -658,10 +609,7 @@ static void CaptureRectangle(void)
 		return;
 	}
 
-	WCHAR Text[128];
-	wsprintfW(Text, L"%d x %d", Rect.right - Rect.left, Rect.bottom - Rect.top);
-
-	StartRecording(Device, Text);
+	StartRecording(Device);
 }
 
 static int GetPointResize(int X, int Y)
@@ -1049,9 +997,6 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 			DWORD Bitrate, LengthMsec;
 			Encoder_GetStats(&gEncoder, &Bitrate, &LengthMsec, &FileSize);
 
-			// wsprintfW cannot do floats, so we multiply by 100 to have 2 digits after decimal point
-			DWORD Framerate = MUL_DIV_ROUND_UP(100, gEncoder.FramerateNum, gEncoder.FramerateDen);
-
 			WCHAR LengthText[128];
 			StrFromTimeIntervalW(LengthText, _countof(LengthText), LengthMsec, 6);
 
@@ -1059,8 +1004,9 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 			StrFormatByteSizeW(FileSize, SizeText, _countof(SizeText));
 
 			WCHAR Text[1024];
-			wsprintfW(Text, L"Recording: %dx%d @ %d.%02d\nLength: %s\nBitrate: %u kbit/s\nSize: %s\nFramedrop: %u",
-				gEncoder.OutputWidth, gEncoder.OutputHeight, Framerate / 100, Framerate % 100,
+			StrFormat(Text, L"Recording: %dx%d @ %.2f\nLength: %ls\nBitrate: %u kbit/s\nSize: %ls\nFramedrop: %u",
+				gEncoder.OutputWidth, gEncoder.OutputHeight,
+				(float)gEncoder.FramerateNum / (float)gEncoder.FramerateDen,
 				LengthText,
 				Bitrate,
 				SizeText,
@@ -1125,7 +1071,7 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 					FrameRect(Context, &Rect, GetStockObject(WHITE_BRUSH));
 
 					WCHAR Text[128];
-					int TextLength = wsprintfW(Text, L"%d x %d", X1 - X0, Y1 - Y0);
+					int TextLength = StrFormat(Text, L"%d x %d", X1 - X0, Y1 - Y0);
 
 					SelectObject(Context, gFontBold);
 					SetTextAlign(Context, TA_TOP | TA_RIGHT);
@@ -1293,7 +1239,11 @@ static void OnCaptureFrame(ID3D11Texture2D* Texture, RECT Rect, UINT64 Time)
 	}
 }
 
+#ifndef NDEBUG
+int WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdline, int cmdshow)
+#else
 void WinMainCRTStartup()
+#endif
 {
 	WNDCLASSEXW WindowClass =
 	{
@@ -1323,19 +1273,18 @@ void WinMainCRTStartup()
 
 	Config_Defaults(&gConfig);
 	Config_Load(&gConfig, gConfigPath);
-	Audio_Init(&gAudio);
 	Capture_Init(&gCapture, &OnCaptureClose, &OnCaptureFrame);
 	Encoder_Init(&gEncoder);
 
 	QueryPerformanceFrequency(&gTickFreq);
 
-	gCursorArrow = LoadCursorA(NULL, IDC_ARROW);
-	gCursorResize[WCAP_RESIZE_NONE] = LoadCursorA(NULL, IDC_CROSS);
-	gCursorResize[WCAP_RESIZE_M]    = LoadCursorA(NULL, IDC_SIZEALL);
-	gCursorResize[WCAP_RESIZE_T]    = gCursorResize[WCAP_RESIZE_B]  = LoadCursorA(NULL, IDC_SIZENS);
-	gCursorResize[WCAP_RESIZE_L]    = gCursorResize[WCAP_RESIZE_R]  = LoadCursorA(NULL, IDC_SIZEWE);
-	gCursorResize[WCAP_RESIZE_TL]   = gCursorResize[WCAP_RESIZE_BR] = LoadCursorA(NULL, IDC_SIZENWSE);
-	gCursorResize[WCAP_RESIZE_TR]   = gCursorResize[WCAP_RESIZE_BL] = LoadCursorA(NULL, IDC_SIZENESW);
+	gCursorArrow = LoadCursor(NULL, IDC_ARROW);
+	gCursorResize[WCAP_RESIZE_NONE] = LoadCursor(NULL, IDC_CROSS);
+	gCursorResize[WCAP_RESIZE_M]    = LoadCursor(NULL, IDC_SIZEALL);
+	gCursorResize[WCAP_RESIZE_T]    = gCursorResize[WCAP_RESIZE_B]  = LoadCursor(NULL, IDC_SIZENS);
+	gCursorResize[WCAP_RESIZE_L]    = gCursorResize[WCAP_RESIZE_R]  = LoadCursor(NULL, IDC_SIZEWE);
+	gCursorResize[WCAP_RESIZE_TL]   = gCursorResize[WCAP_RESIZE_BR] = LoadCursor(NULL, IDC_SIZENWSE);
+	gCursorResize[WCAP_RESIZE_TR]   = gCursorResize[WCAP_RESIZE_BL] = LoadCursor(NULL, IDC_SIZENESW);
 
 	gFont = CreateFontW(-WCAP_UI_FONT_SIZE, 0, 0, 0, FW_NORMAL,
 		FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,

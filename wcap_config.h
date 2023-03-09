@@ -5,16 +5,16 @@
 #define CONFIG_VIDEO_H264 0
 #define CONFIG_VIDEO_H265 1
 
-#define CONFIG_VIDEO_BASE 0
-#define CONFIG_VIDEO_MAIN 1
-#define CONFIG_VIDEO_HIGH 2
+#define CONFIG_VIDEO_BASE    0
+#define CONFIG_VIDEO_MAIN    1
+#define CONFIG_VIDEO_HIGH    2
+#define CONFIG_VIDEO_MAIN_10 3
 
 #define CONFIG_AUDIO_AAC  0
 #define CONFIG_AUDIO_FLAC 1
 
 typedef struct Config {
 	// capture
-	BOOL ShowNotifications;
 	BOOL MouseCursor;
 	BOOL OnlyClientArea;
 	BOOL CaptureAudio;
