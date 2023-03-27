@@ -1520,6 +1520,7 @@ int wmain(int argc, wchar_t* argv[])
 		BOOL Result = GetMessageW(&Message, NULL, 0, 0);
 		if (Result == 0)
 		{
+			StopRecording();
 			ExitProcess(0);
 		}
 		Assert(Result > 0);
@@ -1547,6 +1548,7 @@ int wmain(int argc, wchar_t* argv[])
 				Encoder_Update(&gEncoder, Time.QuadPart, gTickFreq.QuadPart);
 			}
 			break;
+		case WM_CLOSE:
 		case WM_WCAP_STOP_CAPTURE:
 			StopRecording();
 			return 0;
