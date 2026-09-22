@@ -53,7 +53,7 @@ call :fxc ConvertPass2           || exit /b 1
 for /f %%i in ('call git describe --always --dirty') do set CL=%CL% -DWCAP_GIT_INFO=\"%%i\"
 
 rc.exe /nologo wcap.rc || exit /b 1
-cl.exe /nologo /std:c11 /experimental:c11atomics /W3 /WX wcap.c wcap.res /Fewcap-%TARGET_ARCH%.exe /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:wcap.manifest /SUBSYSTEM:WINDOWS || exit /b 1
+cl.exe /nologo /std:c11 /experimental:c11atomics /W3 /WX wcap.c wcap.res /Fewcap-%TARGET_ARCH%.exe /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:wcap.manifest /SUBSYSTEM:CONSOLE || exit /b 1
 del *.obj *.res >nul
 
 goto :eof
