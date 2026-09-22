@@ -98,6 +98,7 @@ static HFONT gFontBold;
 // recording state
 static BOOL gRecordingStarted;
 static BOOL gRecording;
+static BOOL gRecordingAudio;
 static DWORD gRecordingLimitFramerate;
 static DWORD gRecordingDroppedFrames;
 static UINT64 gRecordingLastFrame;
@@ -263,22 +264,24 @@ static void StartRecording(ID3D11Device* Device, HWND Window)
 		.Config = &gConfig,
 	};
 
+	gRecordingAudio = FALSE;
 	if (gConfig.CaptureAudio)
 	{
 		HWND ApplicationWindow = gConfig.ApplicationLocalAudio && AudioCapture_CanCaptureApplicationLocal() ? Window : NULL;
 		if (!AudioCapture_Start(&gAudio, ApplicationWindow))
 		{
-			ShowNotification(L"Cannot capture audio!", L"Cannot Start Recording", NIIF_WARNING);
-			ScreenCapture_Stop(&gCapture);
-			ID3D11Device_Release(Device);
-			return;
+			ShowNotification(L"Cannot capture audio! Recording without audio.", L"Audio Capture Error", NIIF_WARNING);
 		}
-		EncConfig.AudioFormat = gAudio.Format;
+		else
+		{
+			gRecordingAudio = TRUE;
+			EncConfig.AudioFormat = gAudio.Format;
+		}
 	}
 
 	if (!Encoder_Start(&gEncoder, Device, gRecordingPath, &EncConfig))
 	{
-		if (gConfig.CaptureAudio)
+		if (gRecordingAudio)
 		{
 			AudioCapture_Stop(&gAudio);
 		}
@@ -293,7 +296,7 @@ static void StartRecording(ID3D11Device* Device, HWND Window)
 	gRecordingDroppedFrames = 0;
 	ScreenCapture_Start(&gCapture, gConfig.MouseCursor, gConfig.ShowRecordingBorder, gConfig.IncludeSecondaryWindows);
 
-	if (gConfig.CaptureAudio)
+	if (gRecordingAudio)
 	{
 		gAudioTimer = SetTimer(gWindow, WCAP_AUDIO_CAPTURE_TIMER, WCAP_AUDIO_CAPTURE_INTERVAL, NULL);
 	}
@@ -356,7 +359,7 @@ static void StopRecording(void)
 	gRecording = FALSE;
 	SetThreadExecutionState(gRecordingState);
 
-	if (gConfig.CaptureAudio)
+	if (gRecordingAudio)
 	{
 		KillTimer(gWindow, gAudioTimer);
 		AudioCapture_Flush(&gAudio);
@@ -1528,22 +1531,24 @@ static BOOL StartSimpleRecording(ID3D11Device* Device, HWND Window, LPWSTR filep
 		.Config = &gConfig,
 	};
 
+	gRecordingAudio = FALSE;
 	if (gConfig.CaptureAudio)
 	{
 		HWND ApplicationWindow = gConfig.ApplicationLocalAudio && AudioCapture_CanCaptureApplicationLocal() ? Window : NULL;
 		if (!AudioCapture_Start(&gAudio, ApplicationWindow))
 		{
-			CmdErrorMessage(L"Cannot capture audio!");
-			ScreenCapture_Stop(&gCapture);
-			ID3D11Device_Release(Device);
-			return FALSE;
+			CmdErrorMessage(L"Cannot capture audio! Recording without audio.");
 		}
-		EncConfig.AudioFormat = gAudio.Format;
+		else
+		{
+			gRecordingAudio = TRUE;
+			EncConfig.AudioFormat = gAudio.Format;
+		}
 	}
 
 	if (!Encoder_Start(&gEncoder, Device, filepath, &EncConfig))
 	{
-		if (gConfig.CaptureAudio)
+		if (gRecordingAudio)
 		{
 			AudioCapture_Stop(&gAudio);
 		}
@@ -1557,7 +1562,7 @@ static BOOL StartSimpleRecording(ID3D11Device* Device, HWND Window, LPWSTR filep
 	gRecordingDroppedFrames = 0;
 	ScreenCapture_Start(&gCapture, gConfig.MouseCursor, gConfig.ShowRecordingBorder, gConfig.IncludeSecondaryWindows);
 
-	if (gConfig.CaptureAudio)
+	if (gRecordingAudio)
 	{
 		gAudioTimer = SetTimer(gWindow, WCAP_AUDIO_CAPTURE_TIMER, WCAP_AUDIO_CAPTURE_INTERVAL, NULL);
 	}
