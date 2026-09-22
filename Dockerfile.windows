@@ -1,0 +1,32 @@
+# escape=`
+
+ARG WINDOWS_VERSION=ltsc2022
+FROM mcr.microsoft.com/dotnet/framework/sdk:4.8-windowsservercore-${WINDOWS_VERSION} AS toolchain
+
+SHELL ["cmd", "/S", "/C"]
+
+RUN curl.exe -SL -o C:\vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe `
+    && (start /wait C:\vs_buildtools.exe --quiet --wait --norestart --nocache `
+        --installPath C:\BuildTools `
+        --add Microsoft.VisualStudio.Workload.VCTools `
+        --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 `
+        --includeRecommended `
+        || IF "%ERRORLEVEL%"=="3010" EXIT 0) `
+    && del /q C:\vs_buildtools.exe
+
+WORKDIR C:\src
+
+FROM toolchain AS build
+ARG TARGET_ARCH=x64
+
+COPY . C:\src
+
+RUN call C:\BuildTools\Common7\Tools\VsDevCmd.bat -no_logo -arch=%TARGET_ARCH% -host_arch=x64 `
+    && where cl.exe `
+    && where rc.exe `
+    && where fxc.exe `
+    && call build.cmd %TARGET_ARCH% `
+    && mkdir C:\out `
+    && copy /y wcap-%TARGET_ARCH%.exe C:\out\wcap-%TARGET_ARCH%.exe
+
+CMD ["cmd.exe"]

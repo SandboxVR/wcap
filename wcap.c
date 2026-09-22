@@ -6,7 +6,6 @@
 
 #include "find_window.h"
 #include "arg_config.h"
-#include "getoptw.c"
 #include <wchar.h>
 
 #include <dxgi1_6.h>
@@ -396,7 +395,7 @@ static ID3D11Device* CreateDevice(void)
 			if (SUCCEEDED(IDXGIFactory_QueryInterface(Factory, &IID_IDXGIFactory6, (void**)&Factory6)))
 			{
 				DXGI_GPU_PREFERENCE Preference = gConfig.HardwarePreferIntegrated ? DXGI_GPU_PREFERENCE_MINIMUM_POWER : DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE;
-				if (FAILED(IDXGIFactory6_EnumAdapterByGpuPreference(Factory6, 0, Preference, &IID_IDXGIAdapter, &Adapter)))
+				if (FAILED(IDXGIFactory6_EnumAdapterByGpuPreference(Factory6, 0, Preference, &IID_IDXGIAdapter, (void**)&Adapter)))
 				{
 					// just to be safe
 					Adapter = NULL;
@@ -1498,6 +1497,7 @@ void WinMainCRTStartup()
 static void CmdErrorMessage(LPCWSTR Message)
 {
 	fwprintf(stderr, L"%ls\n", Message);
+	fflush(stderr);
 }
 
 static BOOL StartSimpleRecording(ID3D11Device* Device, HWND Window, LPWSTR filepath)
@@ -1575,13 +1575,13 @@ BOOL captureForWindow(HWND Window, LPWSTR filepath)
 	ID3D11Device* Device = CreateDevice();
 	if (!Device)
 	{
-		puts("Cannot create D3D device");
+		CmdErrorMessage(L"Cannot create D3D device.");
 		return FALSE;
 	}
 
 	if (!ScreenCapture_CreateForWindow(&gCapture, Device, Window, gConfig.OnlyClientArea, !gConfig.KeepRoundedWindowCorners))
 	{
-		puts("Cannot capture the window.");
+		CmdErrorMessage(L"Cannot capture the window.");
 		ID3D11Device_Release(Device);
 		return FALSE;
 	}
@@ -1629,18 +1629,19 @@ int wmain(int argc, wchar_t* argv[])
 {
 	if (!ScreenCapture_IsSupported())
 	{
-		puts("Windows 10 Version 1903, May 2019 Update (19H1) or newer is required!");
-		ExitProcess(1);
+		CmdErrorMessage(L"Windows 10 Version 1903, May 2019 Update (19H1) or newer is required!");
+		return 1;
 	}
 
 	gMessageThreadId = GetCurrentThreadId();
 	HR(CoInitializeEx(0, COINIT_APARTMENTTHREADED));
 
 	CmdConfig config;
-	if (!parseArgs(argc, argv, &config))
+	if (!ParseArgs(argc, argv, &config))
 	{
-		printUsage(argv[0]);
-		ExitProcess(1);
+		PrintUsage(argv[0]);
+		fflush(stdout);
+		return 1;
 	}
 	gConfig = config.wcap;
 
@@ -1655,8 +1656,9 @@ int wmain(int argc, wchar_t* argv[])
 
 	if (hwnd == NULL)
 	{
-		wprintf(L"Window with title \"%s\" not found.\n", config.title);
-		ExitProcess(1);
+		fwprintf(stderr, L"Window with title \"%ls\" not found.\n", config.title);
+		fflush(stderr);
+		return 1;
 	}
 
 	// restore windows if it is minimized.
@@ -1667,7 +1669,7 @@ int wmain(int argc, wchar_t* argv[])
 
 	if (!captureForWindow(hwnd, config.filepath))
 	{
-		ExitProcess(1);
+		return 1;
 	}
 
 	BOOL(*detectQuit)() = _isatty(_fileno(stdin)) ? detectTerminalQuit : detectPipeQuit;
@@ -1680,7 +1682,7 @@ int wmain(int argc, wchar_t* argv[])
 		if (Result == 0)
 		{
 			StopRecording();
-			ExitProcess(0);
+			return 0;
 		}
 		Assert(Result > 0);
 

@@ -35,7 +35,7 @@ if "%ARGS:debug=%" neq "%ARGS%" (
   if "%TARGET_ARCH%" equ "x64" set CL=!CL! /fsanitize=address
 ) else (
   set CL=/GL /O1 /Oi /DNDEBUG /GS-
-  set LINK=/NOCOFFGRPINFO /EMITTOOLVERSIONINFO:NO /LTCG /OPT:REF /OPT:ICF ucrt.lib libvcruntime.lib
+  set LINK=/NOCOFFGRPINFO /EMITTOOLVERSIONINFO:NO /LTCG /OPT:REF /OPT:ICF
   set FXC=/O3 /Qstrip_reflect /Qstrip_debug /Qstrip_priv
 )
 
@@ -50,7 +50,7 @@ call :fxc ConvertSinglePass      || exit /b 1
 call :fxc ConvertPass1           || exit /b 1
 call :fxc ConvertPass2           || exit /b 1
 
-for /f %%i in ('call git describe --always --dirty') do set CL=%CL% -DWCAP_GIT_INFO=\"%%i\"
+where /Q git.exe && for /f %%i in ('call git describe --always --dirty') do set CL=%CL% -DWCAP_GIT_INFO=\"%%i\"
 
 rc.exe /nologo wcap.rc || exit /b 1
 cl.exe /nologo /std:c11 /experimental:c11atomics /W3 /WX wcap.c wcap.res /Fewcap-%TARGET_ARCH%.exe /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:wcap.manifest /SUBSYSTEM:CONSOLE || exit /b 1

@@ -89,6 +89,20 @@ Building
 
 To build the binary from source code, have [Visual Studio][VS] installed, and simply run `build.cmd`.
 
+To build from Linux using a remote Windows Docker host, use the Windows build image:
+
+```bash
+./build-windows-docker.sh x64
+```
+
+The script uses Docker context `winvm` by default and writes `dist/wcap-x64.exe`. Set `DOCKER_CONTEXT` to use a different Windows Docker context. ARM64 cross-compilation is also supported:
+
+```bash
+./build-windows-docker.sh arm64
+```
+
+Windows containers require a Windows Docker host. They cannot run on a Linux Docker daemon.
+
 License
 =======
 
